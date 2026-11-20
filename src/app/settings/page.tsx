@@ -11,7 +11,7 @@ export default function SettingsPage() {
           "Staff users",
           "Product categories",
           "Google Drive config",
-          "Zoho CRM config",
+          "Zoho Flow webhook",
           "Field mappings",
           "Retention settings",
           "Audit logs",

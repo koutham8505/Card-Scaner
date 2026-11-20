@@ -45,7 +45,7 @@ export default function HomeDashboard() {
             <ActionButton href="/qr" label="QR Registration" accent={false} />
             <ActionButton href="/leads" label="My Leads" accent={false} />
             <ActionButton href="/offline" label="Offline Queue" accent={false} />
-            <ActionButton href="/tasks" label="Follow-ups" accent={false} />
+            <ActionButton href="/sync" label="CRM Sync Monitor" accent={false} />
           </div>
         </div>
 

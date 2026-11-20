@@ -14,6 +14,7 @@ type QualifyForm = {
   lead_priority: string;
   conversation_outcome: string;
   next_action: string;
+  demo_date: string;
   notes: string;
   decision_maker: string;
   expected_timeline: string;
@@ -31,6 +32,7 @@ function QualifyInner() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
 
   const [form, setForm] = useState<QualifyForm>({
     visitor_category: "",
@@ -39,6 +41,7 @@ function QualifyInner() {
     lead_priority: "Warm",
     conversation_outcome: "",
     next_action: "Call",
+    demo_date: "",
     notes: "",
     decision_maker: "",
     expected_timeline: "",
@@ -71,10 +74,11 @@ function QualifyInner() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!captureId) return;
-    setSaving(true); setSaveError(""); setMessage("");
+    setSaving(true); setSaveError(""); setMessage(""); setSyncNotice("");
     try {
       const payload = {
         ...form,
+        demo_date: form.demo_date || null,
         decision_maker: form.decision_maker === "yes" ? true : form.decision_maker === "no" ? false : null,
       };
       const res = await fetch(`${apiUrl}/api/v1/captures/${captureId}/qualify`, {
@@ -83,7 +87,16 @@ function QualifyInner() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error((await res.json()).detail ?? "Could not qualify lead.");
-      setMessage("Lead qualified and saved to directory.");
+      const result = await res.json();
+      const syncStatus = result.crm_sync?.status;
+      setMessage(syncStatus === "Sent to Zoho Flow"
+        ? "Lead backed up and sent to Zoho Flow."
+        : "Lead qualified and safely backed up in Supabase.");
+      if (syncStatus === "Failed") {
+        setSyncNotice(`Zoho Flow delivery failed: ${result.crm_sync.message} Retry it from Sync Monitor.`);
+      } else if (syncStatus !== "Sent to Zoho Flow") {
+        setSyncNotice("Zoho Flow delivery is pending configuration. You can check its status in Sync Monitor.");
+      }
       setTimeout(() => router.push("/leads"), 1500);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed.");
@@ -162,10 +175,16 @@ function QualifyInner() {
           <div className="grid gap-4 md:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">
               <span className="mb-2 block">Next action</span>
-              <select value={form.next_action} onChange={(e) => update("next_action", e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+              <select value={form.next_action} onChange={(e) => setForm((current) => ({ ...current, next_action: e.target.value, demo_date: e.target.value === "Schedule Demo" ? current.demo_date : "" }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
                 {["Call", "Email", "Schedule Demo", "Schedule Meeting", "Follow Up Later", "No Action"].map((a) => <option key={a}>{a}</option>)}
               </select>
             </label>
+            {form.next_action === "Schedule Demo" && (
+              <label className="block text-sm font-medium text-slate-700">
+                <span className="mb-2 block">Demo date *</span>
+                <input required type="date" value={form.demo_date} onChange={(e) => update("demo_date", e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" />
+              </label>
+            )}
             <label className="block text-sm font-medium text-slate-700">
               <span className="mb-2 block">Assigned owner</span>
               <input value={form.assigned_owner} onChange={(e) => update("assigned_owner", e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-emerald-300 focus:bg-white" placeholder="Staff name" />
@@ -197,6 +216,11 @@ function QualifyInner() {
         {message && (
           <p role="status" className="flex items-center gap-2 text-sm font-medium text-emerald-700">
             <CheckCircle size={16} /> {message}
+          </p>
+        )}
+        {syncNotice && (
+          <p role="status" className="rounded-2xl bg-amber-50 p-4 text-sm font-medium text-amber-800">
+            {syncNotice} <a href="/sync" className="underline">Open Sync Monitor</a>
           </p>
         )}
 

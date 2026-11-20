@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -14,8 +15,9 @@ load_dotenv()
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.integrations import ZohoFlowLeadAdapter, ZohoIntegrationError
 from app.store import Store, utcnow
 
 app = FastAPI(title="Rareminds EventConnect API", version="0.2.0")
@@ -103,6 +105,31 @@ def record_audit(request: Request, action: str, entity_type: str, entity_id: str
     )
 
 
+async def deliver_zoho_flow(capture: dict) -> dict:
+    if (
+        os.environ.get("ZOHO_FLOW_ENABLED") != "true"
+        or os.environ.get("ZOHO_MAPPING_APPROVED") != "true"
+        or not os.environ.get("ZOHO_FLOW_WEBHOOK_URL")
+    ):
+        return {
+            "status": "Pending Configuration",
+            "message": "Lead is backed up; Zoho Flow delivery is not configured.",
+        }
+
+    try:
+        result = await ZohoFlowLeadAdapter().execute(capture, capture.get("qualification", {}))
+    except ZohoIntegrationError as error:
+        store.set_crm_sync_job_status(capture["id"], "Failed", str(error))
+        return {"status": "Failed", "message": str(error)}
+
+    store.set_crm_sync_job_status(capture["id"], "Completed")
+    return {
+        "status": result.status,
+        "operation": result.operation,
+        "message": result.message,
+    }
+
+
 @app.middleware("http")
 async def require_proxy_token(request, call_next):
     if request.url.path.startswith("/api/v1/") and request.url.path != "/api/v1/health":
@@ -156,9 +183,16 @@ class Qualification(BaseModel):
     estimated_value: float | None = None
     assigned_owner: str | None = None
     follow_up_at: str | None = None
+    demo_date: date | None = None
     consent_status: str = "unknown"
     consent_source: str | None = None
     consent_timestamp: str | None = None
+
+    @model_validator(mode="after")
+    def require_demo_date_for_demo_action(self) -> Qualification:
+        if self.next_action == "Schedule Demo" and self.demo_date is None:
+            raise ValueError("A demo date is required when the next action is Schedule Demo.")
+        return self
 
 
 class ManualCapture(BaseModel):
@@ -234,6 +268,12 @@ async def save_image(capture_id: str, side: str, upload: UploadFile) -> str:
 @app.get("/api/v1/health")
 def health() -> dict:
     database = "PostgreSQL" if store.database_url else "SQLite (local only)"
+    zoho_flow_configured = (
+        os.environ.get("ZOHO_FLOW_ENABLED") == "true"
+        and os.environ.get("ZOHO_MAPPING_APPROVED") == "true"
+        and bool(os.environ.get("ZOHO_FLOW_WEBHOOK_URL"))
+        and all(os.environ.get(name) for name in ("ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN"))
+    )
     return {
         "ok": True,
         "service": "rareminds-eventconnect",
@@ -242,7 +282,7 @@ def health() -> dict:
         "config": {
             "supabase": "Configured" if store.database_url and os.environ.get("SUPABASE_SERVICE_ROLE_KEY") else "Pending Configuration",
             "google_drive": "Writes disabled pending Shared Drive access verification",
-            "zoho_crm": "Writes disabled pending metadata verification and approval",
+            "zoho_crm": "Zoho Flow configured" if zoho_flow_configured else "Zoho Flow disabled or pending configuration",
             "qr_registration": "Enabled" if os.environ.get("EVENTCONNECT_QR_ENABLED") == "true" else "Disabled pending payload validation",
         },
     }
@@ -298,11 +338,17 @@ async def create_capture(request: Request, capture_id: UUID = Form(...), event_c
 
 
 @app.post("/api/v1/captures/manual")
-def create_manual_capture(request: Request, payload: ManualCapture) -> dict:
+async def create_manual_capture(request: Request, payload: ManualCapture) -> dict:
     require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
     capture_id = str(payload.capture_id)
     try:
-        capture = store.create_manual_capture(capture_id, payload.event_code, payload.fields, payload.qualification.model_dump(exclude_none=True))
+        capture = store.create_manual_capture(
+            capture_id,
+            payload.event_code,
+            payload.fields,
+            payload.qualification.model_dump(mode="json", exclude_none=True),
+        )
+        capture["crm_sync"] = await deliver_zoho_flow(capture)
         record_audit(request, "capture.manual_create", "capture", capture_id)
         return capture
     except ValueError:
@@ -384,11 +430,13 @@ def verify_capture(request: Request, capture_id: str, payload: Verification) -> 
 
 
 @app.post("/api/v1/captures/{capture_id}/qualify")
-def qualify_capture(request: Request, capture_id: str, payload: Qualification) -> dict:
+async def qualify_capture(request: Request, capture_id: str, payload: Qualification) -> dict:
     require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
     try:
-        capture = store.qualify_capture(capture_id, payload.model_dump(exclude_none=True))
-        record_audit(request, "capture.qualify", "capture", capture_id, payload.model_dump(exclude_none=True))
+        qualification = payload.model_dump(mode="json", exclude_none=True)
+        capture = store.qualify_capture(capture_id, qualification)
+        capture["crm_sync"] = await deliver_zoho_flow(capture)
+        record_audit(request, "capture.qualify", "capture", capture_id, qualification)
         return capture
     except KeyError:
         raise HTTPException(404, "Capture not found")
@@ -412,6 +460,22 @@ def sync_jobs(request: Request) -> list[dict]:
     return store.list_sync_jobs()
 
 
+@app.post("/api/v1/captures/{capture_id}/sync/zoho-flow")
+async def retry_zoho_flow_sync(request: Request, capture_id: str) -> dict:
+    require_roles(request, {"super_admin", "event_manager"})
+    try:
+        capture = store.get_capture(capture_id)
+    except KeyError as error:
+        raise HTTPException(404, "Capture not found") from error
+    if capture["status"] != "Qualified":
+        raise HTTPException(409, "Only qualified leads can be sent to Zoho Flow.")
+    if not store.requeue_crm_sync_job(capture_id):
+        raise HTTPException(409, "No retryable Zoho Flow delivery job exists for this lead.")
+    result = await deliver_zoho_flow(capture)
+    record_audit(request, "lead.zoho_flow_retry", "capture", capture_id, {"status": result["status"]})
+    return {"capture_id": capture_id, "crm_sync": result}
+
+
 @app.get("/api/v1/dashboard/summary")
 def dashboard_summary(request: Request) -> dict:
     require_roles(request, {"super_admin", "event_manager", "sales_rep"})
@@ -419,7 +483,7 @@ def dashboard_summary(request: Request) -> dict:
 
 
 @app.post("/api/v1/qr/register")
-def qr_register(request: Request, payload: QRRegistration) -> dict:
+async def qr_register(request: Request, payload: QRRegistration) -> dict:
     require_roles(request, {"super_admin", "event_manager", "booth_staff"})
     if os.environ.get("EVENTCONNECT_QR_ENABLED") != "true":
         raise HTTPException(503, "QR registration is disabled pending event payload validation.")
@@ -443,6 +507,7 @@ def qr_register(request: Request, payload: QRRegistration) -> dict:
             qualification,
             method="qr",
         )
+        capture["crm_sync"] = await deliver_zoho_flow(capture)
         record_audit(request, "qr.register", "capture", str(payload.capture_id), {"consent_status": payload.consent_status})
         return capture
     except ValueError as error:

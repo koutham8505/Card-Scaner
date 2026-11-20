@@ -285,18 +285,6 @@ class Store:
                     "INSERT INTO captures(id,capture_code,event_code,capture_method,status,created_at,updated_at,front_path,back_path,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (capture_id, code, event_code, method, "Received by Server", now, now, front_path, back_path, key),
                 )
-                db.execute(
-                    "INSERT INTO app_sync_jobs(id,capture_id,provider,status,idempotency_key,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
-                    (str(uuid.uuid4()), capture_id, "ocr", "Pending", f"ocr:{capture_id}", now),
-                )
-                db.execute(
-                    "INSERT INTO app_sync_jobs(id,capture_id,provider,status,idempotency_key,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
-                    (str(uuid.uuid4()), capture_id, "google_drive", "Pending", f"drive:{capture_id}", now),
-                )
-                db.execute(
-                    "INSERT INTO app_sync_jobs(id,capture_id,provider,status,idempotency_key,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
-                    (str(uuid.uuid4()), capture_id, "zoho_crm", "Pending", f"crm:{capture_id}", now),
-                )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("idempotency_conflict") from exc
             except Exception as exc:
@@ -359,15 +347,22 @@ class Store:
             fields = capture["extracted_fields"]
         full_name = fields.get("full_name") or " ".join(filter(None, [fields.get("first_name"), fields.get("last_name")])).strip()
         search_key = " ".join([full_name, fields.get("institution", ""), fields.get("email", "")]).lower()
+        follow_up_at = qualification.get("follow_up_at")
+        if qualification.get("next_action") == "Schedule Demo":
+            follow_up_at = qualification.get("demo_date") or follow_up_at
         now = utcnow()
         with self.connect() as db:
             db.execute("UPDATE captures SET qualification=?,verification_status='qualified',status='Qualified',updated_at=? WHERE id=?", (json.dumps(qualification), now, capture_id))
             db.execute("""INSERT INTO leads(id,capture_id,full_name,institution,designation,email,mobile,city,state,country,address,priority,status,capture_method,captured_at,assigned_owner,follow_up_at,consent_status,search_key)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(capture_id) DO UPDATE SET full_name=excluded.full_name,institution=excluded.institution,designation=excluded.designation,email=excluded.email,mobile=excluded.mobile,city=excluded.city,state=excluded.state,country=excluded.country,address=excluded.address,priority=excluded.priority,status='Qualified',assigned_owner=excluded.assigned_owner,follow_up_at=excluded.follow_up_at,consent_status=excluded.consent_status,search_key=excluded.search_key""",
-                       (str(uuid.uuid4()), capture_id, full_name or None, fields.get("institution"), fields.get("designation"), fields.get("email"), fields.get("mobile"), fields.get("city"), fields.get("state"), fields.get("country", "India"), fields.get("address"), qualification.get("lead_priority", "Cold"), "Qualified", capture["capture_method"], capture["created_at"], qualification.get("assigned_owner"), qualification.get("follow_up_at"), qualification.get("consent_status", "unknown"), search_key))
-            if qualification.get("next_action") not in (None, "No Action"):
-                db.execute("INSERT INTO tasks(id,capture_id,lead_name,assigned_owner,action_type,due_at,priority,status,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                           (str(uuid.uuid4()), capture_id, full_name, qualification.get("assigned_owner"), qualification["next_action"], qualification.get("follow_up_at") or now, qualification.get("lead_priority", "Cold"), "Pending", qualification.get("notes"), now))
+                       (str(uuid.uuid4()), capture_id, full_name or None, fields.get("institution"), fields.get("designation"), fields.get("email"), fields.get("mobile"), fields.get("city"), fields.get("state"), fields.get("country", "India"), fields.get("address"), qualification.get("lead_priority", "Cold"), "Qualified", capture["capture_method"], capture["created_at"], qualification.get("assigned_owner"), follow_up_at, qualification.get("consent_status", "unknown"), search_key))
+            db.execute(
+                "INSERT INTO app_sync_jobs(id,capture_id,provider,status,idempotency_key,created_at) "
+                "VALUES(?,?,?,'Pending',?,?) "
+                "ON CONFLICT(idempotency_key) DO UPDATE SET status='Pending',attempts=0,last_error=NULL,"
+                "next_retry_at=NULL,completed_at=NULL",
+                (str(uuid.uuid4()), capture_id, "zoho_crm", f"crm-flow:{capture_id}", now),
+            )
         return self.get_capture(capture_id)
 
     def list_captures(self) -> list[dict]:
@@ -398,6 +393,24 @@ class Store:
     def list_sync_jobs(self) -> list[dict]:
         with self.connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM app_sync_jobs ORDER BY created_at DESC").fetchall()]
+
+    def set_crm_sync_job_status(self, capture_id: str, status: str, last_error: str | None = None) -> None:
+        completed_at = utcnow() if status == "Completed" else None
+        with self.connect() as db:
+            db.execute(
+                "UPDATE app_sync_jobs SET status=?,attempts=attempts+1,last_error=?,"
+                "next_retry_at=NULL,completed_at=? WHERE capture_id=? AND provider='zoho_crm'",
+                (status, last_error, completed_at, capture_id),
+            )
+
+    def requeue_crm_sync_job(self, capture_id: str) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE app_sync_jobs SET status='Pending',last_error=NULL,next_retry_at=NULL,"
+                "completed_at=NULL WHERE capture_id=? AND provider='zoho_crm' AND status IN ('Pending','Failed')",
+                (capture_id,),
+            )
+            return cursor.rowcount > 0
 
     def dashboard(self) -> dict:
         with self.connect() as db:

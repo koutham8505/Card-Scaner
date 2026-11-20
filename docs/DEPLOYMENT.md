@@ -27,10 +27,15 @@ SUPABASE_ANON_KEY=<Supabase anon key>
 SUPABASE_SERVICE_ROLE_KEY=<Supabase service-role key>
 SUPABASE_STORAGE_BUCKET=eventconnect-cards
 EVENTCONNECT_QR_ENABLED=false
-ZOHO_WRITE_ENABLED=false
+ZOHO_FLOW_ENABLED=false
 GOOGLE_DRIVE_WRITE_ENABLED=false
 GOOGLE_DRIVE_SHARED_DRIVE_ID=<approved-shared-drive-id>
+ZOHO_CLIENT_ID=<read-only-search-client-id>
+ZOHO_CLIENT_SECRET=<secret>
+ZOHO_REFRESH_TOKEN=<read-only-search-refresh-token>
+ZOHO_ACCOUNTS_URL=https://accounts.zoho.in
 ZOHO_MAPPING_APPROVED=false
+ZOHO_FLOW_WEBHOOK_URL=<secret-webhook-url>
 CORS_ORIGINS=https://<frontend-host>
 ```
 
@@ -92,7 +97,8 @@ npm run dev
 
 - OCR uses Tesseract. Install required language data in the runtime and benchmark against an authorized, representative card set; always require human verification.
 - Google Drive service-account use is approved, but folder/file writes remain disabled until the credentials are provisioned in Secret Manager and access to the approved Shared Drive is verified. The adapter, folder/file upload flow, and CRM Drive-link update are not implemented.
-- Zoho writes remain disabled. The backend includes a read-only metadata verifier for the proposed Leads/Contacts/Accounts/Tasks mapping. With Zoho OAuth secrets supplied through a protected runtime, run `python -m app.integrations verify-zoho-metadata`; it fetches actual module fields, reports missing API names, and discovers the Drive URL field only by the exact approved label. It never writes CRM records. Do not set mapping approval or enable writes until metadata is reviewed; CRM record creation/update, duplicate handling, idempotency, tasks, audit, and retries still require implementation and staging tests.
+- Zoho Flow delivery is disabled by default. Configure `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNTS_URL`, and `ZOHO_FLOW_WEBHOOK_URL` in the backend secret manager. Grant the read-only scopes `ZohoCRM.modules.leads.READ` and `ZohoSearch.securesearch.READ` for email matching, plus read access to CRM module/field metadata for the verifier. The OAuth token is used only to search Leads by email; Zoho Flow performs CRM create/update. Run `python -m app.integrations verify-zoho-metadata` to verify the Leads email field, approve the Flow field mapping, then explicitly enable `ZOHO_MAPPING_APPROVED=true` and `ZOHO_FLOW_ENABLED=true`. Keep the webhook URL secret. A completed sync job means Flow accepted the payload, not that downstream CRM actions succeeded; verify the Flow run history and CRM record during staging. EventConnect does not create follow-up tasks.
+- Configure Flow to branch on the JSON `operation` value (`create` or `update`). The payload contains `capture_id`, `capture_code`, `event_code`, `capture_method`, `captured_at`, `operation`, `zoho_lead_id`, `match_email`, `lead`, and `qualification`. When `next_action` is `Schedule Demo`, the app requires a date and sends it as `qualification.demo_date`; map this to a Date custom field such as “Demo Date” on the Zoho Lead, or include it in Description. For updates, use the supplied Zoho Lead ID; for creates, map the lead fields and enforce any required CRM defaults in the Flow. Multiple exact-email matches in Zoho are blocked and surfaced for manual resolution. Flow must use `capture_id` to prevent duplicate processing because a timed-out webhook may be retried. No task is created by EventConnect.
 - Offline capture is implemented as an IndexedDB queue that retries through the normal capture endpoint with stable idempotency keys. It is disabled unless `NEXT_PUBLIC_ENABLE_OFFLINE_CAPTURE=true` is set at frontend build time. Keep it disabled until the organization explicitly approves the unencrypted local image storage risk; the queue has not been tested across target browsers, device restarts, storage eviction, or real offline/online transitions.
 - QR scanning uses the browser `BarcodeDetector` and submits reviewed visitor details as a qualified lead, but is disabled in both frontend and backend by default. Keep `NEXT_PUBLIC_ENABLE_QR_REGISTRATION=false` and `EVENTCONNECT_QR_ENABLED=false` until a sanitized event sample is validated; attendee-ID-only codes are unsupported, and this is not a dedicated attendance system.
 - The service worker provides best-effort app-shell caching only. Confirm offline startup and recovery on every supported browser/device; do not treat it as a guarantee that the app shell or queued data will survive browser eviction.

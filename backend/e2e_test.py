@@ -145,8 +145,17 @@ def main():
     dashboard = jget("/api/v1/dashboard/summary")
     check("dashboard totals present", "totals" in dashboard)
     check("captures include test data", dashboard["totals"]["captures"] >= 2)
-    check("follow-up task created", bool(jget("/api/v1/tasks")))
-    check("sync jobs created", len(jget("/api/v1/sync-jobs")) >= 3)
+    check(
+        "no local follow-up task created",
+        not any(task.get("capture_id") == scan_id for task in jget("/api/v1/tasks")),
+    )
+    check(
+        "Zoho Flow job created after qualification",
+        any(
+            job.get("capture_id") == scan_id and job.get("provider") == "zoho_crm"
+            for job in jget("/api/v1/sync-jobs")
+        ),
+    )
 
     print("\n5. Idempotency")
     repeated = multipart_capture(scan_id)

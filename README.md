@@ -5,13 +5,14 @@ A mobile-first event lead capture and qualification platform for DIDAC 2026 and 
 ## Current implementation
 
 - Mobile front/back camera or gallery capture with image type and 15 MB validation
-- FastAPI capture, OCR review, qualification, lead/task projections, and dashboard
+- FastAPI capture, OCR review, qualification, Supabase-backed lead storage, and dashboard
 - SQLite/local images for development; PostgreSQL and private Supabase Storage when configured
 - Supabase Auth email/password sign-in, signed HttpOnly app session, and active staff profile validation
 - Production-mode startup guard requires PostgreSQL and Supabase configuration
 - IndexedDB offline capture queue with manual/online retry; disabled by default until the organization approves the unencrypted local image storage risk and browser recovery is validated
 - QR visitor scan/review with consent capture and backend lead persistence; disabled by default until the actual event payload is validated
-- Google Drive and Zoho CRM adapters, background integration workers, and role-specific API permissions remain unimplemented
+- Zoho email matching and Zoho Flow webhook delivery are implemented but disabled until credentials, webhook configuration, and field mapping approval are supplied; EventConnect does not create follow-up tasks
+- Google Drive integration and automatic background workers remain unimplemented; failed Zoho Flow jobs can be retried from the Sync Monitor
 
 ## Run frontend
 

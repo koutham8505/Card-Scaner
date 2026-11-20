@@ -15,6 +15,7 @@ type FormState = {
   notes: string;
   lead_priority: string;
   next_action: string;
+  demo_date: string;
   consent_status: string;
 };
 
@@ -22,7 +23,7 @@ const BLANK: FormState = {
   full_name: "", institution: "", designation: "",
   email: "", mobile: "", city: "", state: "",
   notes: "", lead_priority: "Warm",
-  next_action: "Call", consent_status: "unknown",
+  next_action: "Call", demo_date: "", consent_status: "unknown",
 };
 
 const TEXT_FIELDS = [
@@ -40,6 +41,7 @@ export default function ManualEntryPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
 
   const update = (key: keyof FormState, value: string) =>
     setForm((cur) => ({ ...cur, [key]: value }));
@@ -47,6 +49,7 @@ export default function ManualEntryPage() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
+    setSyncNotice("");
 
     // Client-side validation
     if (!form.full_name.trim())
@@ -57,6 +60,8 @@ export default function ManualEntryPage() {
       return setError("Enter a valid phone number.");
     if (form.consent_status === "unknown")
       return setError("Please confirm the visitor's consent status before saving.");
+    if (form.next_action === "Schedule Demo" && !form.demo_date)
+      return setError("Enter the demo date before saving.");
 
     setSaving(true);
     setMessage("");
@@ -79,6 +84,7 @@ export default function ManualEntryPage() {
           qualification: {
             lead_priority: form.lead_priority,
             next_action: form.next_action,
+            demo_date: form.demo_date || null,
             notes: form.notes,
             consent_status: form.consent_status,
           },
@@ -86,7 +92,14 @@ export default function ManualEntryPage() {
       });
       if (!response.ok) throw new Error((await response.json()).detail ?? "Lead could not be saved.");
       const result = await response.json();
-      setMessage(`Lead saved as ${result.capture_code}.`);
+      setMessage(result.crm_sync?.status === "Sent to Zoho Flow"
+        ? `Lead saved as ${result.capture_code} and sent to Zoho Flow.`
+        : `Lead saved as ${result.capture_code} in the Supabase backup.`);
+      if (result.crm_sync?.status === "Failed") {
+        setSyncNotice(`Zoho Flow delivery failed: ${result.crm_sync.message} Retry it from Sync Monitor.`);
+      } else if (result.crm_sync?.status !== "Sent to Zoho Flow") {
+        setSyncNotice("Zoho Flow delivery is pending configuration. You can check its status in Sync Monitor.");
+      }
       setForm(BLANK);
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "Lead could not be saved.");
@@ -126,11 +139,17 @@ export default function ManualEntryPage() {
           {/* Next action */}
           <label className="block text-sm font-medium text-slate-700">
             <span className="mb-2 block">Next action</span>
-            <select value={form.next_action} onChange={(e) => update("next_action", e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+            <select value={form.next_action} onChange={(e) => setForm((current) => ({ ...current, next_action: e.target.value, demo_date: e.target.value === "Schedule Demo" ? current.demo_date : "" }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
               <option>Call</option><option>Email</option><option>Schedule Demo</option>
               <option>Schedule Meeting</option><option>Follow Up Later</option><option>No Action</option>
             </select>
           </label>
+          {form.next_action === "Schedule Demo" && (
+            <label className="block text-sm font-medium text-slate-700">
+              <span className="mb-2 block">Demo date *</span>
+              <input required type="date" value={form.demo_date} onChange={(e) => update("demo_date", e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm" />
+            </label>
+          )}
 
           {/* Consent — required field */}
           <label className="block text-sm font-medium text-slate-700">
@@ -152,6 +171,7 @@ export default function ManualEntryPage() {
 
         {error   && <p role="alert"  className="mt-4 text-sm font-medium text-red-700">{error}</p>}
         {message && <p role="status" className="mt-4 text-sm font-medium text-emerald-700">{message}</p>}
+        {syncNotice && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{syncNotice} <a href="/sync" className="underline">Open Sync Monitor</a></p>}
 
         <button
           type="submit"

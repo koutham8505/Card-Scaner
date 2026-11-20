@@ -98,6 +98,7 @@ function QRRegistrationFlow() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
 
   const stopCamera = () => {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -114,6 +115,7 @@ function QRRegistrationFlow() {
   const startCamera = async () => {
     setError("");
     setMessage("");
+    setSyncNotice("");
     setVisitor(null);
     if (!window.BarcodeDetector) {
       setError("QR camera scanning is not supported in this browser. Use manual entry instead.");
@@ -156,6 +158,7 @@ function QRRegistrationFlow() {
     setSaving(true);
     setError("");
     setMessage("");
+    setSyncNotice("");
     try {
       const response = await fetch(`${apiUrl}/api/v1/qr/register`, {
         method: "POST",
@@ -170,7 +173,14 @@ function QRRegistrationFlow() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail ?? "Registration could not be saved.");
-      setMessage(`Registration saved as ${result.capture_code}.`);
+      setMessage(result.crm_sync?.status === "Sent to Zoho Flow"
+        ? `Registration saved as ${result.capture_code} and sent to Zoho Flow.`
+        : `Registration saved as ${result.capture_code} in the Supabase backup.`);
+      if (result.crm_sync?.status === "Failed") {
+        setSyncNotice(`Zoho Flow delivery failed: ${result.crm_sync.message} Retry it from Sync Monitor.`);
+      } else if (result.crm_sync?.status !== "Sent to Zoho Flow") {
+        setSyncNotice("Zoho Flow delivery is pending configuration. You can check its status in Sync Monitor.");
+      }
       setVisitor(null);
       setConsentStatus("");
     } catch (exception) {
@@ -260,6 +270,7 @@ function QRRegistrationFlow() {
           )}
           {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           {message && <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+          {syncNotice && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{syncNotice} <a href="/sync" className="underline">Open Sync Monitor</a></p>}
         </div>
       </section>
     </AppShell>
