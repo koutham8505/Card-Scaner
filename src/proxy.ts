@@ -19,7 +19,7 @@ export async function proxy(request: NextRequest) {
 
   if (pathname.startsWith("/api/")) {
     if (!(await isValidSessionToken(request.cookies.get(SESSION_COOKIE)?.value))) {
-      return NextResponse.json({ detail: "Authentication required." }, { status: 401 });
+      return NextResponse.json({ detail: "Access required." }, { status: 401 });
     }
     return NextResponse.next();
   }

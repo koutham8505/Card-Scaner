@@ -6,7 +6,6 @@ import { ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
@@ -19,10 +18,10 @@ export default function LoginPage() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ password }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.detail ?? "Sign-in failed.");
+      if (!response.ok) throw new Error(result.detail ?? "Access denied.");
       router.replace("/home");
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "Sign-in failed.");
@@ -41,23 +40,11 @@ export default function LoginPage() {
           <div className="text-center">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Rareminds</p>
             <h1 className="text-xl font-bold text-slate-900">EventConnect</h1>
-            <p className="mt-1 text-sm text-slate-500">DIDAC 2026 • Booth staff access</p>
+            <p className="mt-1 text-sm text-slate-500">DIDAC 2026 • Authorized access</p>
           </div>
         </div>
 
         <form onSubmit={submit} className="space-y-4">
-          <label className="block text-sm font-medium text-slate-700">
-            <span className="mb-2 block">Work email</span>
-            <input
-              type="email"
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@company.com"
-              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-              required
-            />
-          </label>
           <label className="block text-sm font-medium text-slate-700">
             <span className="mb-2 block">Password</span>
             <input
@@ -79,16 +66,16 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={checking || !email || !password}
+            disabled={checking || !password}
             className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-600 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-200 disabled:opacity-60"
           >
-            {checking ? "Checking…" : "Sign in"}
+            {checking ? "Checking…" : "Continue"}
           </button>
         </form>
 
         <div className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-400">
           <ShieldCheck size={13} />
-          <span>Staff sign-in · DIDAC 2026</span>
+          <span>Protected access · DIDAC 2026</span>
         </div>
       </div>
     </main>

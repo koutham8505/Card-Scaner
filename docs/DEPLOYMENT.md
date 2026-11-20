@@ -7,11 +7,10 @@ Configure these only in the hosting platform's secret manager. Do not send secre
 ### Next.js
 
 ```dotenv
+EVENTCONNECT_ACCESS_PASSWORD=<shared random passphrase, at least 16 characters>
 EVENTCONNECT_SESSION_SECRET=<random secret, at least 32 characters>
 EVENTCONNECT_API_URL=https://<cloud-run-service-url>
 EVENTCONNECT_API_TOKEN=<same random secret as backend, at least 32 characters>
-SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_ANON_KEY=<Supabase anon key>
 NEXT_PUBLIC_ENABLE_OFFLINE_CAPTURE=false
 NEXT_PUBLIC_ENABLE_QR_REGISTRATION=false
 ```
@@ -23,7 +22,6 @@ EVENTCONNECT_ENV=production
 EVENTCONNECT_API_TOKEN=<same random secret as frontend, at least 32 characters>
 DATABASE_URL=<Supabase PostgreSQL connection string with sslmode=require>
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_ANON_KEY=<Supabase anon key>
 SUPABASE_SERVICE_ROLE_KEY=<Supabase service-role key>
 SUPABASE_STORAGE_BUCKET=eventconnect-cards
 EVENTCONNECT_QR_ENABLED=false
@@ -39,7 +37,7 @@ ZOHO_FLOW_WEBHOOK_URL=<secret-webhook-url>
 CORS_ORIGINS=https://<frontend-host>
 ```
 
-The backend refuses production startup if PostgreSQL or Supabase auth/storage configuration is missing. The checked-in migration creates only the `eventconnect-cards` bucket. Keep the service-role key backend-only. Cloud Run is publicly reachable with the current Cloudflare-to-Run authentication design; protect data routes with both the proxy token and staff access token, and apply Cloudflare rate limits/WAF controls.
+The app uses one shared access password for staff, an eight-hour signed HttpOnly session cookie, and an API token between the Next.js server and FastAPI. Set a unique random access password and session secret; keep both server-only. All staff share this password, actions are not attributed to individual users, and changing the password invalidates existing sessions. Apply hosting-level rate limits to `/api/auth/login`. The backend refuses production startup if PostgreSQL or Supabase storage configuration is missing. The checked-in migration creates only the `eventconnect-cards` bucket. Keep the service-role key backend-only and apply HTTPS, ingress restrictions, and rate limits/WAF controls at the backend host.
 
 ## Supabase setup
 
@@ -47,14 +45,10 @@ The backend refuses production startup if PostgreSQL or Supabase auth/storage co
    - `supabase/migrations/202610260001_eventconnect_core.sql`
    - `supabase/migrations/202611100001_eventconnect_runtime.sql`
    - `supabase/migrations/202611200001_seed_rareminds_admin_profile.sql`
-2. Create the Rareminds admin in Supabase Auth before applying the profile migration; choose/reset its password directly in Supabase.
-3. Apply migrations to staging with a reviewed deployment identity.
-4. The admin migration links the existing Auth user to an active `super_admin` profile. For other staff, create individual Auth users and matching active `staff_profiles` rows with a supported role.
-5. Test that unknown, unprofiled, inactive, and invalid-role accounts are rejected by the backend.
-6. Confirm the private bucket is not public; only the backend service role may upload/download.
-7. Test a full capture/restart/read/OCR flow against staging before any real lead data is entered.
-
-The backend currently checks that a user has an active staff profile; it does not yet enforce a distinct permission matrix for each role. Review that requirement before production.
+2. Apply migrations to staging with a reviewed deployment identity. The admin-profile migration is retained for existing production history; it skips seeding if there is no matching Supabase Auth user.
+3. Supabase Auth users and staff profiles are not used by the current app access gate.
+4. Confirm the private bucket is not public; only the backend service role may upload/download.
+5. Test a full capture/restart/read/OCR flow against staging before any real lead data is entered.
 
 ## Netlify frontend and separate API backend
 
@@ -62,11 +56,11 @@ Netlify is the frontend host. The repository root contains the Next.js app; use 
 
 The Python FastAPI service is separate from the Netlify frontend. Deploy `backend/` to a container-capable host that can run the checked-in Dockerfile, Python dependencies, and Tesseract OCR. Set `EVENTCONNECT_API_URL` in Netlify to that service's HTTPS URL. Set the same randomly generated `EVENTCONNECT_API_TOKEN` on both services. Keep `DATABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the API host only. Restrict ingress where possible, use HTTPS, and apply rate limiting; CORS is not access control.
 
-Netlify and the API host have not yet been deployed or preview-tested. Test login, cookie sessions, proxied API calls, image capture, OCR, and logout in a Netlify deploy preview connected to a staging Supabase project before using real lead data.
+Netlify and the API host have not yet been deployed or preview-tested. Test the shared-password gate, cookie sessions, proxied API calls, image capture, OCR, and logout in a Netlify deploy preview connected to a staging Supabase project before using real lead data.
 
 ## Local development
 
-SQLite and local images are development-only. Do not set `EVENTCONNECT_ENV=production` for a local SQLite run. For local Supabase integration, configure secrets from a private `.env` file and apply the migrations to a disposable staging project.
+SQLite and local images are development-only. Do not set `EVENTCONNECT_ENV=production` for a local SQLite run. Configure secrets from a private `.env` file and apply the migrations to a disposable staging project.
 
 ```powershell
 Set-Location .\rareminds-eventconnect\backend

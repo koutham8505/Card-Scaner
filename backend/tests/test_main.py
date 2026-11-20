@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("EVENTCONNECT_API_TOKEN", "test-token-with-at-least-32-characters")
-os.environ.setdefault("EVENTCONNECT_TEST_AUTH_BYPASS", "true")
 
 from app.main import app, store
 from app.store import Store
@@ -36,7 +35,7 @@ def test_health_reports_disabled_integrations(monkeypatch):
     }
 
 
-def test_event_directory_is_available_to_staff():
+def test_event_directory_is_available_through_frontend_proxy():
     response = client.get("/api/v1/events")
 
     assert response.status_code == 200
@@ -55,7 +54,6 @@ def test_production_store_refuses_local_sqlite(monkeypatch, tmp_path):
     for name in (
         "DATABASE_URL",
         "SUPABASE_URL",
-        "SUPABASE_ANON_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -64,32 +62,13 @@ def test_production_store_refuses_local_sqlite(monkeypatch, tmp_path):
         Store(tmp_path / "production.db")
 
 
-def test_api_requires_supabase_access_token(monkeypatch):
-    monkeypatch.delenv("EVENTCONNECT_TEST_AUTH_BYPASS", raising=False)
+def test_api_accepts_backend_token_without_supabase_user_token():
     response = TestClient(app).get(
         "/api/v1/captures",
         headers={"X-EventConnect-Proxy-Token": os.environ["EVENTCONNECT_API_TOKEN"]},
     )
 
-    assert response.status_code == 401
-
-
-def test_production_session_validation_requires_staff_profile(monkeypatch):
-    monkeypatch.delenv("EVENTCONNECT_TEST_AUTH_BYPASS", raising=False)
-
-    async def reject_unregistered_staff(_access_token):
-        return False, 403, "No staff profile is assigned to this account."
-
-    monkeypatch.setattr("app.main.validate_staff_session", reject_unregistered_staff)
-    response = TestClient(app).post(
-        "/api/v1/auth/session",
-        headers={
-            "X-EventConnect-Proxy-Token": os.environ["EVENTCONNECT_API_TOKEN"],
-            "X-Supabase-Access-Token": "invalid-user-token",
-        },
-    )
-
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 def test_capture_requires_front_image():

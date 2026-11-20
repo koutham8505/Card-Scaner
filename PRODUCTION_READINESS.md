@@ -6,25 +6,24 @@ The repository can build and exercise the core capture contract locally, but DID
 
 ## Evidence
 
-- `npm run lint` and `npm run build`: pass with the auth/session, offline, QR gating, and frontend changes.
+- `npm run lint` and `npm run build`: pass with the shared-password/session, offline, QR gating, and frontend changes.
 - Next.js is upgraded to 16.4.6 and `npm audit --omit=dev` reports no production dependency vulnerabilities.
 - Supabase project `awsztmuuubarbqajdvzp` accepted publishable and secret API-key checks; local environment files were created under ignored `.env*` paths.
-- Both Supabase migrations were applied to the production project after explicit approval. Remote migration history and the `events`, `captures`, `leads`, `tasks`, `app_sync_jobs`, and private bucket endpoints were verified.
+- All three Supabase migrations were applied to the production project after explicit approval. Remote migration history and the `events`, `captures`, `leads`, `tasks`, `app_sync_jobs`, and private bucket endpoints were verified.
 - The backend's local `DATABASE_URL` remains blank; API persistence is therefore still SQLite locally, and PostgreSQL runtime/restart behavior has not been validated.
-- Role-specific API authorization and mutation audit recording are implemented for capture, OCR, verification, qualification, QR, lead, task, dashboard, and sync routes.
-- `python -m pytest -q` from `backend`: 24 tests pass, including capture lifecycle, event directory, auth requirements, QR default-off enforcement, required demo-date validation/persistence, mocked Zoho email matching/Flow delivery, duplicate rejection, failure backup, and retry behavior.
+- Mutation audit recording is implemented, but actions are no longer attributed to individual staff because access uses a shared password.
+- `python -m pytest -q` from `backend`: 23 tests pass, including capture lifecycle, event directory, backend proxy-token enforcement, QR default-off enforcement, required demo-date validation/persistence, mocked Zoho email matching/Flow delivery, duplicate rejection, failure backup, and retry behavior.
 - Docker image build was not verified because Docker Desktop is unavailable in this environment.
-- Web Crypto session round-trip, tampering/oversize rejection, and unauthenticated production route smoke checks pass locally.
-- Browser login uses Supabase Auth; FastAPI verifies the access token and requires a matching active staff profile.
+- Browser access uses a shared password and signed HttpOnly session; the backend accepts requests only from the server-side API proxy token.
 - PostgreSQL store and private Supabase Storage adapters are implemented; production backend startup refuses missing PostgreSQL/Supabase configuration.
 - Dashboard metrics read from the application API, with SQLite used only for local development and PostgreSQL required in production. Offline queueing is disabled by default; QR capture is disabled in both frontend and backend until a sanitized real payload is validated.
 - The standalone end-to-end smoke test now requires the backend proxy token and is excluded from automatic side-effectful execution during pytest collection.
 - Migrations are applied to production, but no separate staging project exists in this setup and the backend has not yet been connected to PostgreSQL with `DATABASE_URL`.
 - Google Drive: not connected or tested.
 - Zoho: backend email matching and Zoho Flow webhook delivery are implemented but disabled by default; no live Zoho verification has been performed.
-- Role-specific API permissions are implemented; live staff account provisioning and staging role testing remain outstanding.
+- Per-user identity and role-specific API permissions are not provided by the shared-password gate.
 - Event directory persistence and event creation API are implemented; PostgreSQL staging validation remains outstanding.
-- Core migration direct-table privileges are revoked from anonymous/authenticated roles; backend access remains restricted to the service role and staff middleware.
+- Core migration direct-table privileges are revoked from anonymous/authenticated roles; database access remains restricted to the backend service role.
 - PostgreSQL and private Storage adapters are unverified against the available staging project.
 - OCR depends on Tesseract and has not been evaluated against an authorized card dataset.
 - Offline queue retry is implemented in the browser and disabled by default at build time, but device-restart/storage-eviction recovery, browser compatibility, and protection of queued images have not been validated. QR scanning/registration is gated off in both frontend and backend until a sanitized real payload is validated.
@@ -34,7 +33,7 @@ The repository can build and exercise the core capture contract locally, but DID
 ## Required before approval
 
 1. Configure `DATABASE_URL` on the backend host and run PostgreSQL persistence, private storage, and restart/recovery tests; establish a separate staging project before future schema changes.
-2. Provision Supabase Auth users and matching active staff profiles; test login, expiration, inactive accounts, and enforce role-specific permissions.
+2. Configure a strong shared access password and session secret; test login, session expiration, password rotation, and hosting-level rate limiting. Actions are not attributable to individual staff, and there is no role-specific permission model.
 3. Configure Zoho read-only OAuth credentials and the HTTPS Zoho Flow webhook in the backend secret manager. Grant the CRM search scope needed for Leads email matching, run `python -m app.integrations verify-zoho-metadata`, and approve the payload mapping in Zoho Flow before enabling delivery.
 4. Provision the approved Drive service account and verify access to the designated Shared Drive.
 5. Test Zoho email matching and Flow create/update branches against a sandbox. Zoho Flow must use the supplied operation and record ID, map the payload to Leads, and must not create follow-up tasks unless that behavior is separately approved.

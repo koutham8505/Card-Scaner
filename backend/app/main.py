@@ -7,12 +7,11 @@ from uuid import UUID
 
 import os
 import hmac
-import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
@@ -31,73 +30,15 @@ _cors_origins = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "ht
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Authorization", "Idempotency-Key", "Content-Type", "X-EventConnect-Proxy-Token", "X-Supabase-Access-Token"],
+    allow_headers=["Idempotency-Key", "Content-Type"],
 )
 
 
-async def validate_staff_session(access_token: str) -> tuple[bool, int, dict[str, str] | str]:
-    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not supabase_url or not anon_key or not service_key:
-        return False, 503, "Supabase authentication is not configured."
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            user_response = await client.get(
-                f"{supabase_url}/auth/v1/user",
-                headers={"apikey": anon_key, "Authorization": f"Bearer {access_token}"},
-            )
-            if user_response.status_code in (401, 403):
-                return False, 401, "Authentication required."
-            user_response.raise_for_status()
-            user = user_response.json()
-            user_id = user.get("id") if isinstance(user, dict) else None
-            if not isinstance(user_id, str):
-                return False, 401, "Authentication required."
-
-            profile_response = await client.get(
-                f"{supabase_url}/rest/v1/staff_profiles",
-                params={
-                    "auth_user_id": f"eq.{user_id}",
-                    "select": "role,active",
-                    "limit": "1",
-                },
-                headers={
-                    "apikey": service_key,
-                    "Authorization": f"Bearer {service_key}",
-                },
-            )
-            profile_response.raise_for_status()
-            profiles = profile_response.json()
-    except httpx.TimeoutException:
-        return False, 503, "Supabase authentication timed out."
-    except httpx.HTTPStatusError:
-        return False, 503, "Supabase authentication could not be verified."
-    except httpx.RequestError:
-        return False, 503, "Supabase authentication is unavailable."
-
-    if not isinstance(profiles, list) or not profiles:
-        return False, 403, "No staff profile is assigned to this account."
-    profile = profiles[0]
-    if not isinstance(profile, dict) or profile.get("active") is not True:
-        return False, 403, "This staff account is inactive."
-    if profile.get("role") not in {"super_admin", "event_manager", "booth_staff", "sales_rep"}:
-        return False, 403, "This staff account has no valid role."
-    return True, 200, {"user_id": user_id, "role": profile["role"]}
-
-
-def require_roles(request: Request, allowed_roles: set[str]) -> None:
-    role = getattr(request.state, "staff_role", None)
-    if role not in allowed_roles:
-        raise HTTPException(403, "This staff role cannot perform this operation.")
-
-
-def record_audit(request: Request, action: str, entity_type: str, entity_id: str, new_values: dict | None = None) -> None:
+def record_audit(action: str, entity_type: str, entity_id: str, new_values: dict | None = None) -> None:
     store.record_audit(
-        actor_id=getattr(request.state, "staff_user_id", None),
+        actor_id=None,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -136,28 +77,12 @@ async def require_proxy_token(request, call_next):
         expected = os.environ.get("EVENTCONNECT_API_TOKEN", "")
         if len(expected) < 32:
             return JSONResponse(
-                {"detail": "Backend authentication is not configured."},
+                {"detail": "Backend access is not configured."},
                 status_code=503,
             )
         supplied = request.headers.get("X-EventConnect-Proxy-Token", "")
         if not hmac.compare_digest(supplied, expected):
-            return JSONResponse({"detail": "Authentication required."}, status_code=401)
-        if (
-            os.environ.get("EVENTCONNECT_TEST_AUTH_BYPASS") == "true"
-            and os.environ.get("EVENTCONNECT_ENV") != "production"
-        ):
-            request.state.staff_user_id = "test-staff"
-            request.state.staff_role = "super_admin"
-            return await call_next(request)
-        access_token = request.headers.get("X-Supabase-Access-Token", "")
-        if not access_token:
-            return JSONResponse({"detail": "Authentication required."}, status_code=401)
-        valid, status, result = await validate_staff_session(access_token)
-        if not valid:
-            return JSONResponse({"detail": result}, status_code=status)
-        if isinstance(result, dict):
-            request.state.staff_user_id = result["user_id"]
-            request.state.staff_role = result["role"]
+            return JSONResponse({"detail": "Backend access denied."}, status_code=401)
     return await call_next(request)
 
 
@@ -288,24 +213,13 @@ def health() -> dict:
     }
 
 
-@app.post("/api/v1/auth/session")
-def verify_auth_session(request: Request) -> dict:
-    return {
-        "authenticated": True,
-        "user_id": request.state.staff_user_id,
-        "role": request.state.staff_role,
-    }
-
-
 @app.get("/api/v1/events")
-def list_events(request: Request) -> list[dict]:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def list_events() -> list[dict]:
     return store.list_events()
 
 
 @app.post("/api/v1/events", status_code=201)
-def create_event(request: Request, payload: EventCreate) -> dict:
-    require_roles(request, {"super_admin", "event_manager"})
+def create_event(payload: EventCreate) -> dict:
     try:
         event = store.create_event(
             payload.name.strip(),
@@ -314,15 +228,14 @@ def create_event(request: Request, payload: EventCreate) -> dict:
             payload.start_date,
             payload.end_date,
         )
-        record_audit(request, "event.create", "event", str(event["id"]), payload.model_dump())
+        record_audit("event.create", "event", str(event["id"]), payload.model_dump())
         return event
     except ValueError as exc:
         raise HTTPException(409, "An event with this code already exists.") from exc
 
 
 @app.post("/api/v1/captures", status_code=202)
-async def create_capture(request: Request, capture_id: UUID = Form(...), event_code: str = Form(...), capture_method: str = Form(...), front: UploadFile = File(...), back: UploadFile | None = File(default=None), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff"})
+async def create_capture(capture_id: UUID = Form(...), event_code: str = Form(...), capture_method: str = Form(...), front: UploadFile = File(...), back: UploadFile | None = File(default=None), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict:
     key = idempotency_key or str(capture_id)
     existing = store.find_by_idempotency(key)
     if existing:
@@ -333,13 +246,12 @@ async def create_capture(request: Request, capture_id: UUID = Form(...), event_c
         capture = store.create_capture(str(capture_id), event_code, capture_method, key, front_path, back_path)
     except ValueError:
         raise HTTPException(409, "Capture ID conflicts with a different idempotency key")
-    record_audit(request, "capture.create", "capture", str(capture_id), {"capture_method": capture_method})
+    record_audit("capture.create", "capture", str(capture_id), {"capture_method": capture_method})
     return capture
 
 
 @app.post("/api/v1/captures/manual")
-async def create_manual_capture(request: Request, payload: ManualCapture) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+async def create_manual_capture(payload: ManualCapture) -> dict:
     capture_id = str(payload.capture_id)
     try:
         capture = store.create_manual_capture(
@@ -349,21 +261,19 @@ async def create_manual_capture(request: Request, payload: ManualCapture) -> dic
             payload.qualification.model_dump(mode="json", exclude_none=True),
         )
         capture["crm_sync"] = await deliver_zoho_flow(capture)
-        record_audit(request, "capture.manual_create", "capture", capture_id)
+        record_audit("capture.manual_create", "capture", capture_id)
         return capture
     except ValueError:
         raise HTTPException(409, "A capture with this ID already exists")
 
 
 @app.get("/api/v1/captures")
-def list_captures(request: Request) -> list[dict]:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def list_captures() -> list[dict]:
     return store.list_captures()
 
 
 @app.get("/api/v1/captures/{capture_id}")
-def get_capture(request: Request, capture_id: str) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def get_capture(capture_id: str) -> dict:
     try:
         return store.get_capture(capture_id)
     except KeyError:
@@ -371,8 +281,7 @@ def get_capture(request: Request, capture_id: str) -> dict:
 
 
 @app.post("/api/v1/captures/{capture_id}/ocr")
-def run_ocr(request: Request, capture_id: str, payload: OCRInput) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def run_ocr(capture_id: str, payload: OCRInput) -> dict:
     from app.ocr import extract_text_from_image, merge
     try:
         capture = store.get_capture(capture_id)
@@ -414,55 +323,49 @@ def run_ocr(request: Request, capture_id: str, payload: OCRInput) -> dict:
         parsed["sources"],
         parsed["conflicts"],
     )
-    record_audit(request, "capture.ocr", "capture", capture_id)
+    record_audit("capture.ocr", "capture", capture_id)
     return capture
 
 
 @app.patch("/api/v1/captures/{capture_id}/verify")
-def verify_capture(request: Request, capture_id: str, payload: Verification) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def verify_capture(capture_id: str, payload: Verification) -> dict:
     try:
         capture = store.verify_capture(capture_id, payload.fields)
-        record_audit(request, "capture.verify", "capture", capture_id, payload.fields)
+        record_audit("capture.verify", "capture", capture_id, payload.fields)
         return capture
     except KeyError:
         raise HTTPException(404, "Capture not found")
 
 
 @app.post("/api/v1/captures/{capture_id}/qualify")
-async def qualify_capture(request: Request, capture_id: str, payload: Qualification) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+async def qualify_capture(capture_id: str, payload: Qualification) -> dict:
     try:
         qualification = payload.model_dump(mode="json", exclude_none=True)
         capture = store.qualify_capture(capture_id, qualification)
         capture["crm_sync"] = await deliver_zoho_flow(capture)
-        record_audit(request, "capture.qualify", "capture", capture_id, qualification)
+        record_audit("capture.qualify", "capture", capture_id, qualification)
         return capture
     except KeyError:
         raise HTTPException(404, "Capture not found")
 
 
 @app.get("/api/v1/leads")
-def list_leads(request: Request, q: str = "", priority: str = "") -> list[dict]:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def list_leads(q: str = "", priority: str = "") -> list[dict]:
     return store.list_leads(q, priority)
 
 
 @app.get("/api/v1/tasks")
-def list_tasks(request: Request) -> list[dict]:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff", "sales_rep"})
+def list_tasks() -> list[dict]:
     return store.list_tasks()
 
 
 @app.get("/api/v1/sync-jobs")
-def sync_jobs(request: Request) -> list[dict]:
-    require_roles(request, {"super_admin", "event_manager"})
+def sync_jobs() -> list[dict]:
     return store.list_sync_jobs()
 
 
 @app.post("/api/v1/captures/{capture_id}/sync/zoho-flow")
-async def retry_zoho_flow_sync(request: Request, capture_id: str) -> dict:
-    require_roles(request, {"super_admin", "event_manager"})
+async def retry_zoho_flow_sync(capture_id: str) -> dict:
     try:
         capture = store.get_capture(capture_id)
     except KeyError as error:
@@ -472,19 +375,17 @@ async def retry_zoho_flow_sync(request: Request, capture_id: str) -> dict:
     if not store.requeue_crm_sync_job(capture_id):
         raise HTTPException(409, "No retryable Zoho Flow delivery job exists for this lead.")
     result = await deliver_zoho_flow(capture)
-    record_audit(request, "lead.zoho_flow_retry", "capture", capture_id, {"status": result["status"]})
+    record_audit("lead.zoho_flow_retry", "capture", capture_id, {"status": result["status"]})
     return {"capture_id": capture_id, "crm_sync": result}
 
 
 @app.get("/api/v1/dashboard/summary")
-def dashboard_summary(request: Request) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "sales_rep"})
+def dashboard_summary() -> dict:
     return store.dashboard()
 
 
 @app.post("/api/v1/qr/register")
-async def qr_register(request: Request, payload: QRRegistration) -> dict:
-    require_roles(request, {"super_admin", "event_manager", "booth_staff"})
+async def qr_register(payload: QRRegistration) -> dict:
     if os.environ.get("EVENTCONNECT_QR_ENABLED") != "true":
         raise HTTPException(503, "QR registration is disabled pending event payload validation.")
     if payload.consent_status not in {"granted", "declined", "verbal"}:
@@ -508,7 +409,7 @@ async def qr_register(request: Request, payload: QRRegistration) -> dict:
             method="qr",
         )
         capture["crm_sync"] = await deliver_zoho_flow(capture)
-        record_audit(request, "qr.register", "capture", str(payload.capture_id), {"consent_status": payload.consent_status})
+        record_audit("qr.register", "capture", str(payload.capture_id), {"consent_status": payload.consent_status})
         return capture
     except ValueError as error:
         raise HTTPException(409, "This QR registration has already been submitted.") from error

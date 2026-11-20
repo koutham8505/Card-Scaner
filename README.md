@@ -7,7 +7,8 @@ A mobile-first event lead capture and qualification platform for DIDAC 2026 and 
 - Mobile front/back camera or gallery capture with image type and 15 MB validation
 - FastAPI capture, OCR review, qualification, Supabase-backed lead storage, and dashboard
 - SQLite/local images for development; PostgreSQL and private Supabase Storage when configured
-- Supabase Auth email/password sign-in, signed HttpOnly app session, and active staff profile validation
+- Shared-password access gate with a signed, expiring HttpOnly app session
+- Server-to-server API token protects the FastAPI service; Supabase Auth is not used for app sign-in
 - Production-mode startup guard requires PostgreSQL and Supabase configuration
 - IndexedDB offline capture queue with manual/online retry; disabled by default until the organization approves the unencrypted local image storage risk and browser recovery is validated
 - QR visitor scan/review with consent capture and backend lead persistence; disabled by default until the actual event payload is validated
@@ -46,6 +47,6 @@ python -m pytest -q
 
 ## Staging setup
 
-Apply the core and runtime migrations in `supabase/migrations/` to a reviewed staging project. Configure the environment variables from `.env.example` in server-side secret stores, create individual Supabase Auth users, and provision matching active `staff_profiles` rows. Never expose service-role keys or auth tokens through `NEXT_PUBLIC_*`.
+Apply the migrations in `supabase/migrations/` to a reviewed staging project. Configure the environment variables from `.env.example` in server-side secret stores. The shared access password is common to all staff; rotate it when access should be revoked. Do not expose the access password, session secret, API token, or service-role key through `NEXT_PUBLIC_*`.
 
-The staging connection must be exercised before launch. Google Drive/Zoho integration, browser-level offline recovery, real QR payload validation, role-specific authorization, privacy/retention procedures, backups, monitoring, and UAT are still release blockers. See [production readiness](PRODUCTION_READINESS.md), [integration status](INTEGRATION_STATUS.md), and the [deployment guide](docs/DEPLOYMENT.md).
+The staging connection must be exercised before launch. Google Drive/Zoho integration, browser-level offline recovery, real QR payload validation, access-password rate limiting, privacy/retention procedures, backups, monitoring, and UAT are still release blockers. See [production readiness](PRODUCTION_READINESS.md), [integration status](INTEGRATION_STATUS.md), and the [deployment guide](docs/DEPLOYMENT.md).

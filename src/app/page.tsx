@@ -60,7 +60,7 @@ export default function HomePage() {
             </div>
             <div className="space-y-4">
               {[
-                "Supabase sign-in and staff profile checks",
+                "Shared-password access gate",
                 "Mobile-first dashboard and navigation",
                 "Lead capture and verification flow",
                 "OCR review and qualification form",
@@ -75,7 +75,7 @@ export default function HomePage() {
               ))}
             </div>
             <div className="mt-6 rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4 text-sm text-cyan-200">
-              Local and staging foundations are implemented; validate Supabase, browser recovery, QR payloads, and role permissions before production. Drive and CRM adapters still need implementation.
+              Use a strong shared access password and rotate it when staff access changes. Validate database storage, browser recovery, and QR payloads before production. Drive and CRM adapters still need implementation.
             </div>
           </div>
         </section>

@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 export const SESSION_COOKIE = "ec_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const encoder = new TextEncoder();
@@ -23,27 +25,42 @@ function sessionSecret(): string | null {
   return secret && secret.length >= 32 ? secret : null;
 }
 
-export function isAuthenticationConfigured(): boolean {
-  return Boolean(
-    sessionSecret() &&
-      process.env.SUPABASE_URL &&
-      process.env.SUPABASE_ANON_KEY,
-  );
+function accessPassword(): string | null {
+  const password = process.env.EVENTCONNECT_ACCESS_PASSWORD;
+  return password && password.length >= 16 ? password : null;
 }
 
-export async function createSessionToken(accessToken: string, expiresIn: number): Promise<string | null> {
+function sessionSigningKey(): string | null {
   const secret = sessionSecret();
-  if (!secret || expiresIn <= 0) return null;
+  const password = accessPassword();
+  return secret && password ? `${secret}:${password}` : null;
+}
+
+export function isAccessGateConfigured(): boolean {
+  return Boolean(sessionSecret() && accessPassword());
+}
+
+export function verifyAccessPassword(candidate: string): boolean {
+  const expected = accessPassword();
+  if (!expected || candidate.length > 1024) return false;
+
+  const expectedHash = createHash("sha256").update(expected, "utf8").digest();
+  const candidateHash = createHash("sha256").update(candidate, "utf8").digest();
+  return timingSafeEqual(candidateHash, expectedHash);
+}
+
+export async function createSessionToken(): Promise<string | null> {
+  const signingKey = sessionSigningKey();
+  if (!signingKey) return null;
 
   const payload = encodeBase64Url(
     encoder.encode(JSON.stringify({
-      exp: Math.floor(Date.now() / 1000) + Math.min(expiresIn, SESSION_TTL_SECONDS),
-      accessToken,
+      exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
     })),
   );
   const key = await crypto.subtle.importKey(
     "raw",
-    encoder.encode(secret),
+    encoder.encode(signingKey),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -55,44 +72,36 @@ export async function createSessionToken(accessToken: string, expiresIn: number)
 }
 
 export async function isValidSessionToken(token: string | undefined): Promise<boolean> {
-  return (await getSessionAccessToken(token)) !== null;
-}
-
-export async function getSessionAccessToken(token: string | undefined): Promise<string | null> {
-  const secret = sessionSecret();
-  if (!secret || !token || token.length > 8192) return null;
+  const signingKey = sessionSigningKey();
+  if (!signingKey || !token || token.length > 8192) return false;
 
   const [payload, signature, extra] = token.split(".");
-  if (!payload || !signature || extra) return null;
+  if (!payload || !signature || extra) return false;
   const actual = decodeBase64Url(signature);
   const payloadBytes = decodeBase64Url(payload);
-  if (!actual || actual.length !== 32 || !payloadBytes) return null;
+  if (!actual || actual.length !== 32 || !payloadBytes) return false;
 
   let claims: unknown;
   try {
     claims = JSON.parse(new TextDecoder().decode(payloadBytes));
   } catch {
-    return null;
+    return false;
   }
   const key = await crypto.subtle.importKey(
     "raw",
-    encoder.encode(secret),
+    encoder.encode(signingKey),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["verify"],
   );
-  if (!(await crypto.subtle.verify("HMAC", key, new Uint8Array(actual), encoder.encode(payload)))) return null;
+  if (!(await crypto.subtle.verify("HMAC", key, new Uint8Array(actual), encoder.encode(payload)))) return false;
   return (
     typeof claims === "object" &&
     claims !== null &&
     "exp" in claims &&
     typeof claims.exp === "number" &&
-    claims.exp > Math.floor(Date.now() / 1000) &&
-    "accessToken" in claims &&
-    typeof claims.accessToken === "string"
-  )
-    ? claims.accessToken
-    : null;
+    claims.exp > Math.floor(Date.now() / 1000)
+  );
 }
 
 export function sessionTtlSeconds(): number {

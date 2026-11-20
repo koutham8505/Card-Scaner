@@ -2,7 +2,7 @@
 
 | Requirement ID | Feature name | Frontend implementation location | Backend implementation location | Database table | API endpoint | Test coverage | Implementation status | Outstanding dependency |
 |---|---|---|---|---|---|---|---|---|
-| REQ-1 | Authentication and user management | `src/app/login/page.tsx`, `src/proxy.ts`, `src/lib/session.ts` | `backend/app/main.py` | `staff_profiles` | `POST /api/auth/login` | Backend proxy auth tests | Implemented baseline | Live Supabase Auth/profile tests; staging role-matrix validation |
+| REQ-1 | Shared-password access gate | `src/app/login/page.tsx`, `src/proxy.ts`, `src/lib/session.ts` | `backend/app/main.py` | None | `POST /api/auth/login` | Backend proxy token tests | Implemented baseline | Configure secrets and hosting-level login rate limiting; no per-user identity or role permissions |
 | REQ-2 | Event management | `src/app/events/page.tsx` | `backend/app/store.py`, `backend/app/main.py` | `events` | `GET /api/v1/events`, `POST /api/v1/events` | Backend event directory test | Implemented | Apply migration and validate PostgreSQL event persistence |
 | REQ-3 | Staff dashboard | `src/app/home/page.tsx` | `backend/app/store.py`, `backend/app/main.py` | `captures`, `leads`, `app_sync_jobs` | `GET /api/v1/dashboard/summary` | SQLite API lifecycle tests | Implemented | Validate PostgreSQL results in staging |
 | REQ-4 | Visiting-card camera scanner | `src/app/scan/page.tsx` | `backend/app/main.py` | `captures`, `card_images`/private Storage | `POST /api/v1/captures` | Capture replay test | Implemented | Full PostgreSQL/Storage staging validation |

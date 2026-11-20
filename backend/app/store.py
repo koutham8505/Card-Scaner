@@ -65,7 +65,6 @@ class Store:
             required = (
                 "DATABASE_URL",
                 "SUPABASE_URL",
-                "SUPABASE_ANON_KEY",
                 "SUPABASE_SERVICE_ROLE_KEY",
             )
             missing = [key for key in required if not os.environ.get(key)]
