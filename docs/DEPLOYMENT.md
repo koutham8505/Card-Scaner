@@ -43,12 +43,13 @@ The backend refuses production startup if PostgreSQL or Supabase auth/storage co
 
 ## Supabase setup
 
-1. Create a staging Supabase project and review both migrations:
+1. Create a staging Supabase project and review the migrations:
    - `supabase/migrations/202610260001_eventconnect_core.sql`
    - `supabase/migrations/202611100001_eventconnect_runtime.sql`
-2. Apply migrations to staging with a reviewed deployment identity.
-3. Configure Supabase Auth email/password and create individual staff accounts.
-4. For each enabled Auth user, create an active `staff_profiles` row with matching `auth_user_id`, unique email, and one of `super_admin`, `event_manager`, `booth_staff`, or `sales_rep`.
+   - `supabase/migrations/202611200001_seed_rareminds_admin_profile.sql`
+2. Create the Rareminds admin in Supabase Auth before applying the profile migration; choose/reset its password directly in Supabase.
+3. Apply migrations to staging with a reviewed deployment identity.
+4. The admin migration links the existing Auth user to an active `super_admin` profile. For other staff, create individual Auth users and matching active `staff_profiles` rows with a supported role.
 5. Test that unknown, unprofiled, inactive, and invalid-role accounts are rejected by the backend.
 6. Confirm the private bucket is not public; only the backend service role may upload/download.
 7. Test a full capture/restart/read/OCR flow against staging before any real lead data is entered.
