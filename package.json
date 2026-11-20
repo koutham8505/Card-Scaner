@@ -10,7 +10,9 @@
     "supabase:start": "supabase start",
     "supabase:status": "supabase status",
     "supabase:link": "supabase link --project-ref awsztmuuubarbqajdvzp",
-    "supabase:push": "supabase db push",
+    "supabase:migrations": "supabase migration list --remote",
+    "supabase:dry-run": "supabase db push --remote --dry-run",
+    "supabase:push": "supabase db push --remote",
     "supabase:stop": "supabase stop"
   },
   "dependencies": {
