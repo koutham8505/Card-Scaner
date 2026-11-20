@@ -1,0 +1,1 @@
+"""Rareminds EventConnect backend package."""
