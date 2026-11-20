@@ -9,6 +9,8 @@ The repository can build and exercise the core capture contract locally, but DID
 - `npm run lint` and `npm run build`: pass with the auth/session, offline, QR gating, and frontend changes.
 - Next.js is upgraded to 16.4.6 and `npm audit --omit=dev` reports no production dependency vulnerabilities.
 - Supabase project `awsztmuuubarbqajdvzp` accepted publishable and secret API-key checks; local environment files were created under ignored `.env*` paths.
+- Both Supabase migrations were applied to the production project after explicit approval. Remote migration history and the `events`, `captures`, `leads`, `tasks`, `app_sync_jobs`, and private bucket endpoints were verified.
+- The backend's local `DATABASE_URL` remains blank; API persistence is therefore still SQLite locally, and PostgreSQL runtime/restart behavior has not been validated.
 - Role-specific API authorization and mutation audit recording are implemented for capture, OCR, verification, qualification, QR, lead, task, dashboard, and sync routes.
 - `python -m pytest -q` from `backend`: 18 tests pass, including capture lifecycle, event directory, auth requirements, QR default-off enforcement, and mocked Zoho metadata validation.
 - Docker image build was not verified because Docker Desktop is unavailable in this environment.
@@ -17,7 +19,7 @@ The repository can build and exercise the core capture contract locally, but DID
 - PostgreSQL store and private Supabase Storage adapters are implemented; production backend startup refuses missing PostgreSQL/Supabase configuration.
 - Dashboard metrics read from the application API, with SQLite used only for local development and PostgreSQL required in production. Offline queueing is disabled by default; QR capture is disabled in both frontend and backend until a sanitized real payload is validated.
 - The standalone end-to-end smoke test now requires the backend proxy token and is excluded from automatic side-effectful execution during pytest collection.
-- Supabase migrations and adapter have not been applied or tested against a live staging project.
+- Migrations are applied to production, but no separate staging project exists in this setup and the backend has not yet been connected to PostgreSQL with `DATABASE_URL`.
 - Google Drive: not connected or tested.
 - Zoho CRM: read-only metadata verification command implemented but not run; CRM writes remain disabled.
 - Role-specific API permissions are implemented; live staff account provisioning and staging role testing remain outstanding.
@@ -31,7 +33,7 @@ The repository can build and exercise the core capture contract locally, but DID
 
 ## Required before approval
 
-1. Apply both migrations to staging and configure approved server secrets; run database, private storage, and restart/recovery tests.
+1. Configure `DATABASE_URL` on the backend host and run PostgreSQL persistence, private storage, and restart/recovery tests; establish a separate staging project before future schema changes.
 2. Provision Supabase Auth users and matching active staff profiles; test login, expiration, inactive accounts, and enforce role-specific permissions.
 3. Configure Zoho OAuth secrets in Secret Manager, run the read-only module/field metadata verifier, resolve missing API names (including the Drive URL custom field), and approve the verified mapping.
 4. Provision the approved Drive service account and verify access to the designated Shared Drive.
